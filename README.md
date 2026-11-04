@@ -38,8 +38,6 @@ flowchart LR
    - Decoupled into single-responsibility modules (`config`, `nlp`, `security`, `index`, `engine`, `ui`, `app`).
 2. **Dual-Level Passage + Document Indexing**:
    - Rather than relying solely on whole-document TF-IDF vectors (which dilute short, buried facts in longer articles), the index vectors both the **entire document** and each **individual passage/sentence**.
-   - Scores are aggregated back up to parent articles using:
-     $$\text{Score} = (W_{\text{doc}} \times \text{doc\_sim}) + (W_{\text{passage}} \times \max(\text{passage\_sims}))$$
    - Buried facts (e.g. "15 minutes", "10,000 rows", "60 requests per minute") gain high precision without losing global document context.
 3. **Typed Data Models**:
    - Added typed data models (`QueryResult`, `Source`, `EvidenceItem`, `RetrievalScore`) for clean interfaces and predictable data contracts.
