@@ -27,7 +27,6 @@ from nlp import (
 )
 from security import is_restricted_query, validate_question
 
-
 def main():
     from ui import run_app
     run_app()
