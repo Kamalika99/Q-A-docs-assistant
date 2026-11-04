@@ -1,5 +1,4 @@
 """Tests and reproducible evaluation for the Solstice Docs Assistant.
-
   pytest -q                 run the tests
   pytest -q -s -k evaluation  run the evaluation and print the metrics
   python test_app.py        print the evaluation report without pytest
