@@ -331,20 +331,24 @@ def test_answers_are_not_hardcoded():
 
 def test_t1_retrieval_threshold(index, monkeypatch):
     import engine
+    engine.clear_query_cache()
     monkeypatch.setattr(config, "MIN_RETRIEVAL_SCORE", 0.99)
     monkeypatch.setattr(engine, "MIN_RETRIEVAL_SCORE", 0.99)
     result = answer_question("How do I reset my password?", index=index)
     assert result["status"] != "ANSWER"
     assert result["processing_details"]["checks"]["T1_retrieval_score"]["passed"] is False
+    engine.clear_query_cache()
 
 
 def test_t2_evidence_coverage(index, monkeypatch):
     import engine
+    engine.clear_query_cache()
     monkeypatch.setattr(config, "MIN_COVERAGE", 1.01)
     monkeypatch.setattr(engine, "MIN_COVERAGE", 1.01)
     result = answer_question("How do I reset my password?", index=index)
     assert result["status"] != "ANSWER"
     assert result["processing_details"]["checks"]["T2_evidence_coverage"]["passed"] is False
+    engine.clear_query_cache()
 
 
 def test_t3_named_term_absent_from_docs_abstains(index):
@@ -467,6 +471,31 @@ def test_evaluation_mandatory_questions(index):
 def test_evaluation_abstention_precision_is_perfect(index):
     metrics = run_evaluation(index)["metrics"]
     assert metrics["abstention_precision"]["value"] in (1.0, None)
+
+
+def test_query_cache_retrieval_and_bypass(index):
+    import engine
+    engine.clear_query_cache()
+
+    # Legitimate question should be processed and cached
+    q = "How do I reset my password?"
+    res1 = answer_question(q, index=index)
+    cache_len_before = len(engine._QUERY_CACHE)
+    assert cache_len_before == 1
+
+    # Exact or same content terms query should hit cache with identical results
+    res2 = answer_question("how do i reset my password?", index=index)
+    assert len(engine._QUERY_CACHE) == 1
+    assert res1["status"] == res2["status"] == "ANSWER"
+    assert res1["answer"] == res2["answer"]
+
+    # Restricted and Invalid queries MUST NEVER enter the query cache
+    answer_question("What is the admin password?", index=index)
+    answer_question("", index=index)
+    assert len(engine._QUERY_CACHE) == 1  # Still 1, restricted & invalid were bypassed
+
+    engine.clear_query_cache()
+    assert len(engine._QUERY_CACHE) == 0
 
 
 if __name__ == "__main__":

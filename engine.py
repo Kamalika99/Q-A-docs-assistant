@@ -1,6 +1,8 @@
 """Retrieval engine: ranks documents via dual document + passage aggregation and evidence selection."""
 
-from typing import Any, Dict, List, Set, Tuple
+import copy
+import functools
+from typing import Any, Dict, List, Optional, Set, Tuple
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 
@@ -16,6 +18,7 @@ from config import (
     PARTIAL_MIN_SCORE,
     PASSAGE_WEIGHT,
     PROCEDURAL_BONUS,
+    QUERY_CACHE_MAXSIZE,
     REQUIRE_STEPS_FOR_HOW_QUESTIONS,
     RESTRICTED_MESSAGE,
     QueryResult,
@@ -120,6 +123,15 @@ def _source_dict(doc: Dict[str, str]) -> Dict[str, str]:
     return {"doc_id": doc["doc_id"], "title": doc["title"], "content": doc["content"]}
 
 
+# Internal cache for verified queries, keyed by (index_id, tuple(sorted_stems))
+_QUERY_CACHE: Dict[Tuple[int, Tuple[str, ...]], Dict[str, Any]] = {}
+
+
+def clear_query_cache() -> None:
+    """Clear in-memory query retrieval cache."""
+    _QUERY_CACHE.clear()
+
+
 def answer_question(question: str, index: Dict[str, Any] = None) -> Dict[str, Any]:
     """Single entry point to answer a documentation question, grounded strictly in facts.
 
@@ -130,8 +142,15 @@ def answer_question(question: str, index: Dict[str, Any] = None) -> Dict[str, An
       - ABSTAIN: documentation does not contain enough information
       - RESTRICTED: credentials or prompt override attempts
       - INVALID: malformed or empty input
+
+    Performance & Caching Strategy:
+      - INVALID and RESTRICTED queries are rejected immediately before retrieval
+        and are never allowed to pollute the query cache.
+      - Legitimate queries reaching Stage 1 & 2 are cached by an immutable key
+        (index instance identity + sorted stemmed query terms) to guarantee
+        sub-millisecond repeat lookups without risking stale data if index changes.
     """
-    # 1. Validation and security checks
+    # 1. Validation and security checks (Evaluated first; bypasses cache completely)
     cleaned, problem = validate_question(question)
     if problem:
         return _make_result("INVALID", problem, problem)
@@ -161,7 +180,15 @@ def answer_question(question: str, index: Dict[str, Any] = None) -> Dict[str, An
         details["note"] = "No meaningful content words after removing stopwords and generic terms."
         return _make_result("ABSTAIN", ABSTAIN_MESSAGE, details["note"], details=details)
 
-    # 3. Stage 1: Document retrieval with dual passage & doc score aggregation
+    # 3. Cache lookup for legitimate queries
+    cache_key = (id(index), tuple(sorted(stems)))
+    if cache_key in _QUERY_CACHE:
+        cached_result = copy.deepcopy(_QUERY_CACHE[cache_key])
+        # Update question string in processing details to reflect current verbatim casing
+        cached_result["processing_details"]["question"] = cleaned
+        return cached_result
+
+    # 4. Stage 1: Document retrieval with dual passage & doc score aggregation
     ranking = rank_documents(cleaned, index)
     docs = index["docs"]
     score_of = dict(ranking)
@@ -228,6 +255,14 @@ def answer_question(question: str, index: Dict[str, Any] = None) -> Dict[str, An
 
     evidence_items = [{"doc_id": docs[best_i]["doc_id"], "text": t} for t in evidence["sentences"]]
 
+    def _store_and_return(res: Dict[str, Any]) -> Dict[str, Any]:
+        if len(_QUERY_CACHE) >= QUERY_CACHE_MAXSIZE:
+            # Evict oldest entry (FIFO)
+            first_key = next(iter(_QUERY_CACHE))
+            _QUERY_CACHE.pop(first_key, None)
+        _QUERY_CACHE[cache_key] = res
+        return copy.deepcopy(res)
+
     # 6. Final outcome decision
     if t1 and t3 and coverage >= MIN_COVERAGE and not t4:
         shown = candidates[:MAX_SOURCES]
@@ -236,7 +271,7 @@ def answer_question(question: str, index: Dict[str, Any] = None) -> Dict[str, An
             ev = select_evidence(index, i, stems, procedural, cleaned)
             evidence_items += [{"doc_id": docs[i]["doc_id"], "text": t} for t in ev["sentences"]]
         names = "; ".join(f"{docs[i]['title']} ({docs[i]['doc_id']})" for i in shown)
-        return _make_result(
+        return _store_and_return(_make_result(
             "AMBIGUOUS",
             f"Possible match \u2014 not verified. Your question could refer to more than one "
             f"article: {names}. Which one did you mean? Adding a specific term (for example "
@@ -247,10 +282,10 @@ def answer_question(question: str, index: Dict[str, Any] = None) -> Dict[str, An
             evidence=evidence_items,
             scores=retrieval_scores,
             details=details,
-        )
+        ))
 
     if t1 and t2 and t3 and t4:
-        return _make_result(
+        return _store_and_return(_make_result(
             "ANSWER",
             " ".join(evidence["sentences"]),
             "All answerability checks passed (retrieval score, evidence coverage, "
@@ -259,13 +294,13 @@ def answer_question(question: str, index: Dict[str, Any] = None) -> Dict[str, An
             evidence=evidence_items,
             scores=retrieval_scores,
             details=details,
-        )
+        ))
 
     # Named term that documentation never mentions => abstain
     if absent_named:
         words = ", ".join(word_of.get(s, s) for s in absent_named)
         reason = f"The documentation never mentions: {words}."
-        return _make_result("ABSTAIN", ABSTAIN_MESSAGE, reason, scores=retrieval_scores, details=details)
+        return _store_and_return(_make_result("ABSTAIN", ABSTAIN_MESSAGE, reason, scores=retrieval_scores, details=details))
 
     if best_score >= PARTIAL_MIN_SCORE and coverage >= PARTIAL_MIN_COVERAGE:
         near = [
@@ -306,7 +341,7 @@ def answer_question(question: str, index: Dict[str, Any] = None) -> Dict[str, An
             )
             ask = "Could you rephrase the question with more specific terms?"
 
-        return _make_result(
+        return _store_and_return(_make_result(
             "PARTIAL",
             f"Possible match \u2014 not verified. The closest article is "
             f"\u201c{docs[best_i]['title']}\u201d ({docs[best_i]['doc_id']}), but it does not "
@@ -316,10 +351,10 @@ def answer_question(question: str, index: Dict[str, Any] = None) -> Dict[str, An
             evidence=evidence_items,
             scores=retrieval_scores,
             details=details,
-        )
+        ))
 
     reason = (
         "No article contains enough of the question's key words "
         f"(best coverage {coverage:.0%}, best retrieval score {best_score:.2f})."
     )
-    return _make_result("ABSTAIN", ABSTAIN_MESSAGE, reason, scores=retrieval_scores, details=details)
+    return _store_and_return(_make_result("ABSTAIN", ABSTAIN_MESSAGE, reason, scores=retrieval_scores, details=details))

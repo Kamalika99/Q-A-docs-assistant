@@ -67,6 +67,9 @@ ACTION_WORDS = {
     "confirm", "contact", "check", "clear", "ensure", "try", "open", "press", "tap", "enable", "go",
 }
 
+# Cache parameters
+QUERY_CACHE_MAXSIZE = 1024
+
 # --------------------------------------------------------------------------
 # UI Example Questions
 # --------------------------------------------------------------------------

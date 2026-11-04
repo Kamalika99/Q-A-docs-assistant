@@ -1,8 +1,3 @@
-"""Solstice Docs Assistant - evidence-grounded documentation Q&A (no LLM).
-
-Streamlit application launcher & backward-compatible facade.
-"""
-
 from config import (
     ABSTAIN_MESSAGE,
     AMBIGUITY_RATIO,
