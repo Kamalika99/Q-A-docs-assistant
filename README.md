@@ -1,4 +1,4 @@
-# Solstice Docs Assistant
+# Docs Assistant
 
 A documentation Q&A assistant for Solstice Learning. It retrieves supporting sentences from documentation, cites them, and refuses to guess when the documentation does not contain the answer. No LLM, embeddings, or external knowledge are used — only TF-IDF, Snowball stemming, and answerability decision rules.
 
