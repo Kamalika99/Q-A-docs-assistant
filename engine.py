@@ -1,5 +1,4 @@
 """Retrieval engine: ranks documents via dual document + passage aggregation and evidence selection."""
-
 import copy
 import functools
 from typing import Any, Dict, List, Optional, Set, Tuple
