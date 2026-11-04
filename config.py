@@ -1,5 +1,3 @@
-"""Configuration, thresholds, constants, and data models for Solstice Docs Assistant."""
-
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
